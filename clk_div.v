@@ -1,6 +1,6 @@
 // 25000000 1 sec
 
-module clock_divider(
+module clk_div(
 	input clk,
 	input rst,
 	input [31:0] TimeExpire,
@@ -27,5 +27,6 @@ begin
 		end
 	end
 end
+
 
 endmodule
