@@ -167,14 +167,14 @@ endmodule
 
 // 任務 (2)
 // 管理 dotRow, dotCol
-module dot_matrix (
-    input wire       clk,
-    input wire       is_started,
-    input wire [1:0] mole_row,
-    input wire [1:0] mole_col,
-    output reg [7:0] dotRow,
-    output reg [7:0] dotCol
-);
+// module dot_matrix (
+//     input wire       clk,
+//     input wire       is_started,
+//     input wire [1:0] mole_row,
+//     input wire [1:0] mole_col,
+//     output reg [7:0] dotRow,
+//     output reg [7:0] dotCol
+// );
 
 // 1. input 包含 clk, is_started, mole_row, mole_col
 // 2. output 為 dotRow, dotCol
@@ -184,8 +184,64 @@ module dot_matrix (
     1. 當 is_started = 0 時, 代表遊戲尚未開始或已結束, 設計並顯示一個 dotMatrix 圖案 (自由發揮)
     2. 當 is_started = 1 時, 根據 mole_row, mole_col 即時顯示地鼠位置 (地鼠大小 2x2)
 */
+module dot_matrix (
+    input wire        clk,          // 連接至 clk_dotMatrix (掃描時鐘)
+    input wire        rst,          // [新增] 連接至 reset (系統重置)
+    input wire        is_started,   // 遊戲狀態
+    input wire [1:0]  mole_row,     // 地鼠邏輯列 (0~3)
+    input wire [1:0]  mole_col,     // 地鼠邏輯行 (0~3)
+    output reg [7:0]  dotRow,       // 物理列輸出 (Active Low: 0為亮)
+    output reg [7:0]  dotCol        // 物理行輸出 (Active High: 1為亮)
+);
+
+    // 掃描計數器 (0~7)
+    reg [2:0] scan_cnt;
+
+    // 1. 掃描計數器控制 (加入 Reset 確保初始狀態確定)
+    always @(posedge clk or negedge rst) begin
+        if (!rst)
+            scan_cnt <= 3'd0;
+        else
+            scan_cnt <= scan_cnt + 1;
+    end
+
+    // 2. Row Driver: 控制列掃描 (Active Low)
+    // 利用位移運算產生循環的 0 (例如: 11111110 -> 11111101...)
+    always @(*) begin
+        dotRow = ~(8'd1 << scan_cnt);
+    end
+
+    // 3. Col Driver: 控制行數據 (顯示圖案)
+    always @(*) begin
+        if (!is_started) begin
+            // --- 待機模式：顯示同心方塊動畫效果 (靜態圖案，依靠視覺暫留) ---
+            case (scan_cnt)
+                3'd0, 3'd7: dotCol = 8'b11111111; // 上下邊框
+                3'd1, 3'd6: dotCol = 8'b10000001; // 外圈
+                3'd2, 3'd5: dotCol = 8'b10111101; // 中圈
+                3'd3, 3'd4: dotCol = 8'b10100101; // 內圈
+                default:    dotCol = 8'h00;
+            endcase
+        end 
+        else begin
+            // --- 遊戲模式：顯示 2x2 地鼠 ---
+            // 邏輯：scan_cnt[2:1] 等於除以 2，將 0~7 的物理列映射到 0~3 的邏輯列
+            if (scan_cnt[2:1] == mole_row) begin
+                // 根據 mole_col 決定水平位置
+                // 3 (二進制 11) 代表地鼠寬度為 2 點
+                // 左移 (mole_col * 2) 格
+                dotCol = 8'd3 << (mole_col * 2);
+            end 
+            else begin
+                dotCol = 8'h00;
+            end
+        end
+    end
 
 endmodule
+
+    
+//endmodule
 
 
 // 任務 (3)
