@@ -43,7 +43,7 @@ module whack_a_mole (
 
     mole_position_updater mole_position_updater_m (clk_dotMatrix, is_started, mole_is_hitted, rand_position_row, rand_position_col, mole_position_row, mole_position_col);
 
-    dot_matrix dot_matrix_m (clk_dotMatrix, is_started, mole_position_row, mole_position_col, dotRow, dotCol);
+    dot_matrix dot_matrix_m (clk_dotMatrix, reset, is_started, mole_position_row, mole_position_col, dotRow, dotCol);
 
     keypad_controller keypad_controller_m (clk_keypad, is_started, keypadCol, mole_position_row, mole_position_col, mole_is_hitted, keypadRow);
 
@@ -62,13 +62,37 @@ module clk_div (
     input wire  [31:0] TimeExpire,
     output reg         output_clk
 );
-// input 包含 clk, rst. output_clk, 其中一種 TimeExpire
+// input 包含 clk, rst. 其中一種 TimeExpire
+// output 為 output_clk
 
 /*
 要求:
     1. 當 rst = 0 時, 重製 clk, output_clk
     2. 當 rst = 1 時, output_clk 每經過 TimeExpire 個 clk 週期就翻轉一次
 */
+
+    reg [31:0] counter;
+
+    always@(posedge clk or negedge rst)
+    begin
+	    if (!rst) // reset when rst is 0
+	    begin
+	    	counter <= 0;
+	    	output_clk <= 0;
+	    end
+	    else
+	    begin
+	    	if (counter == TimeExpire)
+	    	begin
+	    		counter <= 0;
+	    		output_clk <= ~output_clk;
+	    	end
+	    	else
+	    	begin
+	    		counter <= counter + 1;
+	    	end
+	    end
+    end
 
 endmodule
 
@@ -158,7 +182,7 @@ module mole_position_updater (
         if (is_started && mole_is_hitted) begin
             mole_position_row <= rand_position_row;
             mole_position_col <= rand_position_col;
-            // mole_is_hitted 的更新交給 score_display 模組
+            // mole_is_hitted 的更新交給 keypad_controller 模組
         end
     end
 
@@ -169,6 +193,7 @@ endmodule
 // 管理 dotRow, dotCol
 module dot_matrix (
     input wire       clk,
+    input wire       rst,
     input wire       is_started,
     input wire [1:0] mole_row,
     input wire [1:0] mole_col,
@@ -184,6 +209,50 @@ module dot_matrix (
     1. 當 is_started = 0 時, 代表遊戲尚未開始或已結束, 設計並顯示一個 dotMatrix 圖案 (自由發揮)
     2. 當 is_started = 1 時, 根據 mole_row, mole_col 即時顯示地鼠位置 (地鼠大小 2x2)
 */
+
+    // 掃描計數器 (0~7)
+    reg [2:0] scan_cnt;
+
+    // 1. 掃描計數器控制 (加入 Reset 確保初始狀態確定)
+    always @(posedge clk or negedge rst) begin
+        if (!rst)
+            scan_cnt <= 3'd0;
+        else
+            scan_cnt <= scan_cnt + 1;
+    end
+
+    // 2. Row Driver: 控制列掃描 (Active Low)
+    // 利用位移運算產生循環的 0 (例如: 11111110 -> 11111101...)
+    always @(*) begin
+        dotRow = ~(8'd1 << scan_cnt);
+    end
+
+    // 3. Col Driver: 控制行數據 (顯示圖案)
+    always @(*) begin
+        if (!is_started) begin
+            // --- 待機模式：顯示同心方塊動畫效果 (靜態圖案，依靠視覺暫留) ---
+            case (scan_cnt)
+                3'd0, 3'd7: dotCol = 8'b11111111; // 上下邊框
+                3'd1, 3'd6: dotCol = 8'b10000001; // 外圈
+                3'd2, 3'd5: dotCol = 8'b10111101; // 中圈
+                3'd3, 3'd4: dotCol = 8'b10100101; // 內圈
+                default:    dotCol = 8'h00;
+            endcase
+        end 
+        else begin
+            // --- 遊戲模式：顯示 2x2 地鼠 ---
+            // 邏輯：scan_cnt[2:1] 等於除以 2，將 0~7 的物理列映射到 0~3 的邏輯列
+            if (scan_cnt[2:1] == mole_row) begin
+                // 根據 mole_col 決定水平位置
+                // 3 (二進制 11) 代表地鼠寬度為 2 點
+                // 左移 (mole_col * 2) 格
+                dotCol = 8'd3 << (mole_col * 2);
+            end 
+            else begin
+                dotCol = 8'h00;
+            end
+        end
+    end
 
 endmodule
 
@@ -210,7 +279,28 @@ module keypad_controller (
        若擊中了，mole_is_hitted 設為 1
        沒有擊中則什麼都不做 (你想讓他做些什麼也可以)
     3. 每一次的 clk posedge 都要將 mole_is_hitted 指派回 0
+
+    !!! 可能要注意 clk_keypad 與 clk_dotmatrix 的差異，導致分數異常
 */
+
+    always @(posedge clk) begin
+        mole_is_hitted <= 1'b0;
+        if (!is_started) begin
+            keypadRow <= 4'b0000;
+        end
+        else begin
+            case (mole_row)
+                2'd0: keypadRow <= 4'b1110; // 0 for row to be detected
+                2'd1: keypadRow <= 4'b1101;
+                2'd2: keypadRow <= 4'b1011;
+                2'd3: keypadRow <= 4'b0111;
+                default: keypadRow <= 4'b1111;
+            endcase
+            if (keypadCol[mole_col] == 1'b0) begin // 0 when pressed
+                mole_is_hitted <= 1'b1;
+            end
+        end
+    end
 
 endmodule
 
@@ -234,9 +324,11 @@ module score_display (
         end
     end
     /*
-    要求:
+        要求:
         將 score 轉換成 3-digit 7-segment display 即時顯示在 seg_score_0 ~ 2 上
     */
+
+
 endmodule
 
 
@@ -246,7 +338,7 @@ module time_display (
     input wire       clk_sec,
     input wire       rst,
     input wire       is_started,
-    output reg [5:0] time_left = 0,
+    output reg [5:0] time_left = `GAME_TIME,
     output reg [6:0] seg_time_left_0,
     output reg [6:0] seg_time_left_1
 );
@@ -261,5 +353,37 @@ module time_display (
     3. 當 rst 被按下， time_left 回復到 GAME_TIME
     4. 將 time_left 轉換成 2-digit 7-segment display 即時顯示在 seg_time_left_0 ~ 1 上
 */
+
+    wire [3:0] digit_0 = time_left % 10;
+    wire [3:0] digit_1 = time_left / 10;
+
+    always @(posedge clk_sec or negedge rst) begin
+	    if (!rst) begin
+		    time_left <= `GAME_TIME;
+	    end else if (is_started && time_left > 0) begin
+	    	time_left <= time_left - 1'b1;
+	    end
+    end
+
+    function [6:0] decode_7seg(input [3:0] num);
+	    case (num)
+	    	4'd0: decode_7seg = 7'b1000000; // 0
+	    	4'd1: decode_7seg = 7'b1111001; // 1
+	    	4'd2: decode_7seg = 7'b0100100; // 2
+	    	4'd3: decode_7seg = 7'b0110000; // 3
+	    	4'd4: decode_7seg = 7'b0011001; // 4
+	    	4'd5: decode_7seg = 7'b0010010; // 5
+	    	4'd6: decode_7seg = 7'b0000010; // 6
+	    	4'd7: decode_7seg = 7'b1111000; // 7
+	    	4'd8: decode_7seg = 7'b0000000; // 8
+	    	4'd9: decode_7seg = 7'b0010000; // 9
+	    	default: decode_7seg = 7'b1111111; // light out
+	    endcase
+    endfunction
+
+    always @(*) begin
+	    seg_time_left_0 = decode_7seg(digit_0);
+	    seg_time_left_1 = decode_7seg(digit_1);
+    end
 
 endmodule
